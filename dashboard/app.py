@@ -1,7 +1,7 @@
 """FastAPI 后端服务 - 设备预测性维护Dashboard API"""
 
-import sys
-import os
+import sys, os
+import logging, functools, asyncio
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from contextlib import asynccontextmanager
@@ -13,10 +13,19 @@ from typing import Optional, List, Dict, Any, AsyncIterator
 import pandas as pd
 import numpy as np
 
+# 日志配置
+logger = logging.getLogger("dashboard")
+_handler = logging.StreamHandler()
+_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+logger.addHandler(_handler)
+logger.setLevel(logging.INFO)
+
 # 全局状态
 df_global: Optional[pd.DataFrame] = None
 predictor: Any = None
 diagnosis_reports: Dict[str, Any] = {}
+_diagnosis_cache_order: list = []  # LRU 顺序追踪
+_DIAGNOSIS_CACHE_MAX = 10  # 缓存容量上限
 
 
 class DiagnoseRequest(BaseModel):
@@ -134,6 +143,7 @@ def get_devices():
             - rpm: 当前转速
             - anomaly_sensors: 异常传感器列表
     """
+    logger.info("get_devices called")
     if df_global is None:
         raise HTTPException(status_code=500, detail="数据未初始化")
 
@@ -154,14 +164,10 @@ def get_devices():
         else:
             status = "normal"
 
-        # 检测异常传感器
-        outlier_sensors = []
-        if last_row.get("temperature", 0) > 50:
-            outlier_sensors.append("temperature")
-        if last_row.get("vibration", 0) > 6:
-            outlier_sensors.append("vibration")
-        if last_row.get("current", 0) > 20:
-            outlier_sensors.append("current")
+        # 统一使用3σ统计异常检测（models.predict.detect_anomaly）
+        from models.predict import detect_anomaly
+        anomaly = detect_anomaly(df_device)
+        outlier_sensors = anomaly["outlier_sensors"]
 
         devices.append({
             "device_id": device_id,
@@ -272,14 +278,10 @@ def get_alerts():
         last_row = df_device.iloc[-1]
         rul = float(last_row.get("rul", 1.0))
 
-        # 收集异常传感器
-        anomaly_sensors = []
-        if last_row.get("temperature", 0) > 50:
-            anomaly_sensors.append("temperature")
-        if last_row.get("vibration", 0) > 6:
-            anomaly_sensors.append("vibration")
-        if last_row.get("current", 0) > 20:
-            anomaly_sensors.append("current")
+        # 统一使用3σ统计异常检测
+        from models.predict import detect_anomaly
+        anomaly = detect_anomaly(df_device)
+        anomaly_sensors = anomaly["outlier_sensors"]
 
         # 告警条件：RUL < 0.5 或存在异常传感器
         if rul < 0.5 or anomaly_sensors:
@@ -305,7 +307,8 @@ def get_alerts():
 
 
 @app.post("/api/device/{device_id}/diagnose")
-def diagnose_device(device_id: str):
+async def diagnose_device(device_id: str):
+    logger.info(f"diagnose request: device_id={device_id}")
     """触发设备故障诊断
 
     Args:
@@ -331,32 +334,28 @@ def diagnose_device(device_id: str):
     # 获取设备名称
     device_name = df_device["device_name"].iloc[-1] if "device_name" in df_device.columns else device_id
 
-    # 执行诊断
+    # 执行诊断（LLM API 调用较慢，在线程池中隔离执行）
     from agent.diagnostic_agent import diagnose
-    report = diagnose(device_name, df_recent, anomaly_info, device_id)
+    report = await asyncio.to_thread(diagnose, device_name, df_recent, anomaly_info, device_id)
+    logger.info(f"diagnosis done: device_id={device_id}, severity={report.get('severity')}")
 
-    # 缓存报告
+    # LRU 缓存（容量上限 _DIAGNOSIS_CACHE_MAX）
+    if len(diagnosis_reports) >= _DIAGNOSIS_CACHE_MAX:
+        oldest = _diagnosis_cache_order.pop(0)
+        diagnosis_reports.pop(oldest, None)
     diagnosis_reports[device_id] = report
+    if device_id not in _diagnosis_cache_order:
+        _diagnosis_cache_order.append(device_id)
 
     return report
 
 
 @app.get("/api/device/{device_id}/diagnosis")
-def get_diagnosis(device_id: str):
-    """获取设备诊断报告（如存在缓存则返回缓存，否则触发新诊断）
-
-    Args:
-        device_id: 设备ID
-
-    Returns:
-        Dict: 诊断报告
-    """
-    # 检查缓存
+async def get_diagnosis(device_id: str):
+    """获取设备诊断报告（如存在缓存则返回缓存，否则触发新诊断）"""
     if device_id in diagnosis_reports:
         return diagnosis_reports[device_id]
-
-    # 缓存不存在，触发新诊断
-    return diagnose_device(device_id)
+    return await diagnose_device(device_id)
 
 
 # 挂载静态文件目录（html=True 启用SPA路由支持）
