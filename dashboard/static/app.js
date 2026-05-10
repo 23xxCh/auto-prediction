@@ -16,6 +16,40 @@ let gaugeRpm = null;
 // 当前选中设备
 let selectedDeviceId = null;
 
+// ========== Toast 通知 ==========
+
+/**
+ * 显示 Toast 通知
+ * @param {string} message - 通知内容
+ * @param {string} type - 类型 ('error' | 'success')
+ * @param {number} duration - 显示时长（毫秒），默认 4000
+ */
+function showToast(message, type = 'error', duration = 4000) {
+  const container = document.getElementById('toast-container');
+  const toast = document.createElement('div');
+  toast.className = `toast toast-${type}`;
+  toast.innerHTML = `<p class="toast-message">${message}</p>`;
+  container.appendChild(toast);
+
+  // 自动移除
+  setTimeout(() => {
+    removeToast(toast);
+  }, duration);
+}
+
+/**
+ * 移除 Toast 通知（带动画）
+ * @param {HTMLElement} toast - Toast 元素
+ */
+function removeToast(toast) {
+  toast.style.animation = 'toastOut 0.3s ease forwards';
+  toast.addEventListener('animationend', () => {
+    if (toast.parentNode) {
+      toast.parentNode.removeChild(toast);
+    }
+  });
+}
+
 // ========== 工具函数 ==========
 
 /**
@@ -343,31 +377,35 @@ function renderDeviceCards(devices) {
 
   devices.forEach(device => {
     const statusClass = getStatusClass(device.status);
-    const rulClass = getRULClass(device.rul || 0);
-    const rulPercent = Math.min(100, Math.max(0, device.rul || 0));
+    const rulVal = device.rul != null ? device.rul : 1.0;
+    const rulPercent = Math.round(rulVal * 100);
+    const rulClass = rulPercent >= 60 ? 'rul-high' : rulPercent >= 30 ? 'rul-medium' : 'rul-low';
 
     const card = document.createElement('div');
-    card.className = `device-card ${statusClass}${selectedDeviceId === device.id ? ' selected' : ''}`;
-    card.dataset.deviceId = device.id;
-    card.onclick = () => selectDevice(device.id);
+    card.className = `device-card ${statusClass}${selectedDeviceId === device.device_id ? ' selected' : ''}`;
+    card.dataset.deviceId = device.device_id;
+    card.onclick = () => selectDevice(device.device_id);
+
+    const statusLabels = { normal: '正常', warning: '告警', danger: '故障' };
+    const statusText = statusLabels[device.status] || device.status || '未知';
 
     card.innerHTML = `
       <div class="device-card-header">
-        <span class="device-name">${device.name || device.id}</span>
-        <span class="device-status-badge">${device.status_text || device.status}</span>
+        <span class="device-name">${device.device_name || device.device_id}</span>
+        <span class="device-status-badge">${statusText}</span>
       </div>
       <div class="device-info">
         <span>设备ID</span>
-        <span>${device.id}</span>
+        <span>${device.device_id}</span>
       </div>
       <div class="device-info">
         <span>健康得分</span>
-        <span>${(device.health_score || 0).toFixed(1)}%</span>
+        <span>${rulPercent}%</span>
       </div>
       <div class="rul-bar-container">
         <div class="rul-bar-label">
           <span>RUL</span>
-          <span>${(device.rul || 0).toFixed(0)} 周期</span>
+          <span>${rulPercent}%</span>
         </div>
         <div class="rul-bar">
           <div class="rul-bar-fill ${rulClass}" style="width: ${rulPercent}%"></div>
@@ -421,6 +459,7 @@ async function fetchDeviceDetails(deviceId) {
     }
   } catch (error) {
     console.error(`获取设备 ${deviceId} 详情失败:`, error);
+    showToast(`设备数据加载失败: ${error.message}`, 'error');
   }
 }
 
@@ -456,6 +495,8 @@ function renderAlerts(alerts) {
 
 // ========== AI诊断报告弹窗 ==========
 
+let lastFocusedElement = null;
+
 /**
  * 显示AI诊断报告弹窗
  * @param {string} deviceId - 设备ID
@@ -465,71 +506,113 @@ async function showDiagnosis(deviceId) {
   const modalBody = document.getElementById('modal-body');
   const modalTitle = document.getElementById('modal-title');
 
-  // 显示加载状态
+  // 保存当前焦点元素，弹窗关闭时恢复
+  lastFocusedElement = document.activeElement;
+
   modalTitle.textContent = `AI诊断报告 - ${deviceId}`;
-  modalBody.innerHTML = '<div style="text-align:center;padding:40px;color:#8899aa;">正在生成诊断报告...</div>';
+  modalBody.innerHTML = `<div style="text-align:center;padding:40px;color:#8899aa;"><span class="loading-spinner"></span>正在生成诊断报告...</div>`;
   overlay.classList.add('active');
+
+  // 弹窗打开后，将焦点移到弹窗标题（可访问性）
+  modalTitle.setAttribute('tabindex', '-1');
+  modalTitle.focus();
 
   try {
     const response = await fetch(`${API_BASE}/api/device/${deviceId}/diagnosis`);
     if (!response.ok) throw new Error('获取诊断报告失败');
-
     const report = await response.json();
 
-    // 渲染诊断报告
+    // 后端返回: fault_analysis, steps[], parts_needed[], severity, source, device_id, timestamp
+    const sev = report.severity || 'low';
+    const sevBadgeClass = sev === 'high' ? 'severity-high' : sev === 'medium' ? 'severity-medium' : 'severity-low';
+    const sevLabel = { high: '高', medium: '中', low: '低' }[sev] || sev;
+    const sourceLabel = report.source === 'llm' ? 'AI大模型' : '模板匹配';
+    const stepsHtml = Array.isArray(report.steps) && report.steps.length
+      ? '<ol style="padding-left:20px;margin:8px 0;">' + report.steps.map(s => `<li style="margin:6px 0;color:var(--text-secondary)">${s}</li>`).join('') + '</ol>'
+      : '<p style="color:var(--text-secondary)">暂无步骤信息</p>';
+    const partsHtml = Array.isArray(report.parts_needed) && report.parts_needed.length
+      ? '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;">' + report.parts_needed.map(p => `<span style="background:rgba(16,185,129,0.15);color:#10b981;padding:4px 10px;border-radius:4px;font-size:0.8rem;">${p}</span>`).join('') + '</div>'
+      : '<p style="color:var(--text-secondary)">暂无备件信息</p>';
+
     modalBody.innerHTML = `
-      <h4>设备基本信息</h4>
-      <ul>
-        <li><strong>设备ID:</strong> ${report.device_id || deviceId}</li>
-        <li><strong>设备名称:</strong> ${report.device_name || '-'}</li>
-        <li><strong>当前状态:</strong> ${report.status ? `<span class="${getStatusClass(report.status)}">${report.status_text || report.status}</span>` : '-'}</li>
-        <li><strong>健康得分:</strong> ${report.health_score != null ? `<span class="highlight">${report.health_score.toFixed(1)}%</span>` : '-'}</li>
+      <h4 style="color:var(--accent-cyan);font-size:0.95rem;margin:16px 0 8px;padding-bottom:4px;border-bottom:1px dashed var(--border-color)">基本信息</h4>
+      <ul style="list-style:none;padding:0;margin:8px 0;color:var(--text-secondary)">
+        <li style="margin:4px 0"><strong style="color:var(--text-primary);display:inline-block;width:80px">设备ID:</strong> ${report.device_id || deviceId}</li>
+        <li style="margin:4px 0"><strong style="color:var(--text-primary);display:inline-block;width:80px">严重程度:</strong> <span class="${sevBadgeClass}" style="padding:2px 8px;border-radius:4px;font-size:0.8rem;font-weight:600">${sevLabel}</span></li>
+        <li style="margin:4px 0"><strong style="color:var(--text-primary);display:inline-block;width:80px">数据来源:</strong> ${sourceLabel}</li>
+        <li style="margin:4px 0"><strong style="color:var(--text-primary);display:inline-block;width:80px">诊断时间:</strong> ${report.timestamp ? new Date(report.timestamp).toLocaleString('zh-CN') : '-'}</li>
       </ul>
 
-      <h4>传感器数据</h4>
-      <ul>
-        <li><strong>温度:</strong> ${report.temperature != null ? report.temperature.toFixed(2) + ' °C' : '-'}</li>
-        <li><strong>振动:</strong> ${report.vibration != null ? report.vibration.toFixed(2) + ' mm/s' : '-'}</li>
-        <li><strong>电流:</strong> ${report.current != null ? report.current.toFixed(2) + ' A' : '-'}</li>
-        <li><strong>转速:</strong> ${report.rpm != null ? report.rpm.toFixed(0) + ' RPM' : '-'}</li>
-      </ul>
+      <h4 style="color:var(--accent-cyan);font-size:0.95rem;margin:16px 0 8px;padding-bottom:4px;border-bottom:1px dashed var(--border-color)">故障根因分析</h4>
+      <div style="background:rgba(239,68,68,0.1);border-left:3px solid var(--accent-red);padding:12px;border-radius:4px;margin:8px 0;font-size:0.9rem;line-height:1.7;color:var(--text-primary)">${report.fault_analysis || '暂无分析结果'}</div>
 
-      <h4>故障预测</h4>
-      <ul>
-        <li><strong>预测故障类型:</strong> <span class="danger">${report.predicted_fault || '-'}</span></li>
-        <li><strong>剩余使用寿命(RUL):</strong> ${report.rul != null ? `<span class="highlight">${report.rul.toFixed(0)}</span> 周期` : '-'}</li>
-        <li><strong>故障概率:</strong> ${report.fault_probability != null ? (report.fault_probability * 100).toFixed(1) + '%' : '-'}</li>
-      </ul>
+      <h4 style="color:var(--accent-cyan);font-size:0.95rem;margin:16px 0 8px;padding-bottom:4px;border-bottom:1px dashed var(--border-color)">建议操作步骤</h4>
+      ${stepsHtml}
 
-      <h4>AI诊断结论</h4>
-      <p>${report.diagnosis || '暂无诊断信息'}</p>
-
-      <h4>维护建议</h4>
-      <p>${report.maintenance_advice || report.maintenance || '暂无维护建议'}</p>
-
-      ${report.parts ? `
-      <h4>建议更换部件</h4>
-      <ul>
-        ${Array.isArray(report.parts) ? report.parts.map(p => `<li>${p}</li>`).join('') : `<li>${report.parts}</li>`}
-      </ul>
-      ` : ''}
+      <h4 style="color:var(--accent-cyan);font-size:0.95rem;margin:16px 0 8px;padding-bottom:4px;border-bottom:1px dashed var(--border-color)">所需备件清单</h4>
+      ${partsHtml}
     `;
   } catch (error) {
     console.error('获取诊断报告失败:', error);
+    showToast(`诊断报告加载失败: ${error.message}`, 'error');
     modalBody.innerHTML = `
-      <div style="text-align:center;padding:40px;color:#ef4444;">
+      <div style="text-align:center;padding:40px;color:#ef4444">
         <p>获取诊断报告失败</p>
-        <p style="font-size:0.85rem;color:#8899aa;margin-top:10px;">${error.message}</p>
+        <p style="font-size:0.85rem;color:#8899aa;margin-top:8px">${error.message}</p>
       </div>
     `;
   }
 }
 
-/**
- * 关闭诊断报告弹窗
- */
 function closeModal() {
-  document.getElementById('modal-overlay').classList.remove('active');
+  const overlay = document.getElementById('modal-overlay');
+  overlay.classList.remove('active');
+  // 恢复焦点到之前保存的元素（可访问性）
+  if (lastFocusedElement && lastFocusedElement.focus) {
+    lastFocusedElement.focus();
+  }
+}
+
+/**
+ * 键盘陷阱：确保 Tab 键在弹窗内循环
+ */
+function handleTabKey(e) {
+  const overlay = document.getElementById('modal-overlay');
+  if (!overlay.classList.contains('active')) return;
+
+  const focusableElements = overlay.querySelectorAll(
+    'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+  );
+  if (focusableElements.length === 0) return;
+
+  const firstEl = focusableElements[0];
+  const lastEl = focusableElements[focusableElements.length - 1];
+
+  if (e.shiftKey) {
+    // Shift+Tab: 如果焦点在第一个元素，移到最后一个
+    if (document.activeElement === firstEl) {
+      e.preventDefault();
+      lastEl.focus();
+    }
+  } else {
+    // Tab: 如果焦点在最后一个元素，移到第一个
+    if (document.activeElement === lastEl) {
+      e.preventDefault();
+      firstEl.focus();
+    }
+  }
+}
+
+/**
+ * 处理 Escape 键关闭弹窗
+ */
+function handleEscapeKey(e) {
+  if (e.key === 'Escape') {
+    const overlay = document.getElementById('modal-overlay');
+    if (overlay.classList.contains('active')) {
+      closeModal();
+    }
+  }
 }
 
 // ========== 数据轮询 ==========
@@ -584,6 +667,12 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('modal-close').addEventListener('click', closeModal);
   document.getElementById('modal-overlay').addEventListener('click', (e) => {
     if (e.target === e.currentTarget) closeModal();
+  });
+
+  // 键盘事件：Escape 关闭弹窗，Tab 陷阱
+  document.addEventListener('keydown', (e) => {
+    handleEscapeKey(e);
+    handleTabKey(e);
   });
 
   // 首次获取数据
