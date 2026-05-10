@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python *)",
+      "Bash(pip install *)",
+      "Bash(pip list *)",
+      "Bash(pytest *)",
+      "Bash(ls *)",
+      "Bash(mkdir *)",
+      "Bash(cat *)",
+      "Read",
+      "Write",
+      "Edit"
+    ],
+    "deny": []
+  }
+}
