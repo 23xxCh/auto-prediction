@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>智能装备健康管理系统 — 数字孪生看板</title>
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+</head>
+<body>
+<div class="dashboard">
+  <!-- 顶部标题栏 -->
+  <header class="header">
+    <h1>🏭 智能装备健康管理系统 — 数字孪生可视化看板</h1>
+    <span class="clock" id="clock">--</span>
+  </header>
+
+  <!-- 左边栏：设备状态卡片 -->
+  <section class="panel devices-panel">
+    <h2>设备健康状态</h2>
+    <div class="device-cards" id="device-cards"></div>
+  </section>
+
+  <!-- 中间主区域：RUL趋势图 -->
+  <section class="panel rul-panel">
+    <h2>剩余使用寿命（RUL）趋势预测</h2>
+    <div class="chart-container" id="rul-chart"></div>
+  </section>
+
+  <!-- 右下：传感器仪表盘 -->
+  <section class="panel gauge-panel">
+    <h2>实时传感器监测</h2>
+    <div class="gauges" id="gauges">
+      <div class="gauge-item"><div class="chart-container" id="gauge-temp"></div></div>
+      <div class="gauge-item"><div class="chart-container" id="gauge-vib"></div></div>
+      <div class="gauge-item"><div class="chart-container" id="gauge-curr"></div></div>
+      <div class="gauge-item"><div class="chart-container" id="gauge-rpm"></div></div>
+    </div>
+  </section>
+
+  <!-- 告警列表 -->
+  <section class="panel alerts-panel">
+    <h2>报警事件列表</h2>
+    <div class="alerts-table-wrapper">
+      <table id="alerts-table">
+        <thead><tr><th>时间</th><th>设备</th><th>故障类型</th><th>严重级别</th><th>操作</th></tr></thead>
+        <tbody id="alerts-tbody"></tbody>
+      </table>
+    </div>
+  </section>
+</div>
+
+<!-- 诊断报告弹窗 -->
+<div class="modal-overlay" id="modal-overlay">
+  <div class="modal" id="diagnosis-modal">
+    <div class="modal-header">
+      <h3 id="modal-title">AI诊断报告</h3>
+      <button class="modal-close" id="modal-close">&times;</button>
+    </div>
+    <div class="modal-body" id="modal-body"></div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

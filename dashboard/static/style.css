@@ -1,0 +1,598 @@
+/* ============================================
+   智能装备健康管理系统 — 数字孪生看板样式表
+   HMI 工业深色主题
+   ============================================ */
+
+/* CSS 变量定义 - HMI 深色主题调色板 */
+:root {
+  --bg-primary: #0a0e17;       /* 主背景：深海军蓝 */
+  --bg-secondary: #111827;      /* 次级背景：深灰蓝 */
+  --bg-panel: #16213e;          /* 面板背景 */
+  --bg-card: #1a2744;           /* 卡片背景 */
+  --border-color: #1e3a5f;      /* 边框颜色 */
+  --text-primary: #e0e6ed;      /* 主文本 */
+  --text-secondary: #8899aa;    /* 次级文本 */
+  --accent-blue: #3b82f6;       /* 强调蓝 */
+  --accent-green: #10b981;      /* 强调绿：正常状态 */
+  --accent-yellow: #f59e0b;     /* 强调黄：警告状态 */
+  --accent-red: #ef4444;        /* 强调红：危险状态 */
+  --accent-cyan: #06b6d4;       /* 强调青：信息 */
+}
+
+/* 重置与基础样式 */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: 'Segoe UI', 'Microsoft YaHei', -apple-system, sans-serif;
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+/* ============================================
+   主仪表盘布局 - CSS Grid 布局
+   ============================================ */
+.dashboard {
+  display: grid;
+  grid-template-columns: 300px 1fr;      /* 左边栏300px，主区域自适应 */
+  grid-template-rows: 60px 1fr 1fr;     /* 顶部标题60px，下面两行自适应 */
+  grid-template-areas:
+    "header header"
+    "devices rul"
+    "devices gauges"
+    "alerts alerts";
+  gap: 12px;
+  padding: 12px;
+  min-height: 100vh;
+}
+
+/* ============================================
+   顶部标题栏
+   ============================================ */
+.header {
+  grid-area: header;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: linear-gradient(135deg, var(--bg-panel) 0%, var(--bg-secondary) 100%);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 0 24px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.header h1 {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: 0.5px;
+}
+
+.clock {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--accent-cyan);
+  font-family: 'Consolas', 'Courier New', monospace;
+  letter-spacing: 1px;
+}
+
+/* ============================================
+   通用面板样式
+   ============================================ */
+.panel {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  padding: 16px;
+  box-shadow:
+    0 4px 16px rgba(0, 0, 0, 0.25),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.panel h2 {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-color);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+/* ============================================
+   设备状态面板（左侧边栏）
+   ============================================ */
+.devices-panel {
+  grid-area: devices;
+  overflow-y: auto;
+}
+
+.device-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* 设备卡片基础样式 */
+.device-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 12px;
+  cursor: pointer;
+  transition: all 0.25s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.device-card::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--accent-green);
+  transition: width 0.2s ease;
+}
+
+.device-card:hover {
+  transform: translateX(4px);
+  border-color: var(--accent-blue);
+  background: linear-gradient(90deg, rgba(59, 130, 246, 0.1) 0%, transparent 50%);
+}
+
+.device-card:hover::before {
+  width: 4px;
+}
+
+/* 选中状态 */
+.device-card.selected {
+  border-color: var(--accent-blue);
+  background: linear-gradient(90deg, rgba(59, 130, 246, 0.15) 0%, rgba(59, 130, 246, 0.05) 100%);
+  box-shadow: 0 0 12px rgba(59, 130, 246, 0.25);
+}
+
+/* 设备卡片头部信息 */
+.device-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.device-name {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.device-status-badge {
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* 状态颜色 */
+.status-normal {
+  color: var(--accent-green);
+}
+.status-normal .device-status-badge {
+  background: rgba(16, 185, 129, 0.15);
+  border: 1px solid var(--accent-green);
+  color: var(--accent-green);
+}
+
+.status-warning {
+  color: var(--accent-yellow);
+}
+.status-warning .device-status-badge {
+  background: rgba(245, 158, 11, 0.15);
+  border: 1px solid var(--accent-yellow);
+  color: var(--accent-yellow);
+}
+
+.status-danger {
+  color: var(--accent-red);
+}
+.status-danger .device-status-badge {
+  background: rgba(239, 68, 68, 0.15);
+  border: 1px solid var(--accent-red);
+  color: var(--accent-red);
+}
+
+/* 危险状态闪烁边框动画 */
+@keyframes blink-border {
+  0%, 100% {
+    border-color: var(--accent-red);
+    box-shadow: 0 0 8px rgba(239, 68, 68, 0.4);
+  }
+  50% {
+    border-color: rgba(239, 68, 68, 0.3);
+    box-shadow: 0 0 2px rgba(239, 68, 68, 0.1);
+  }
+}
+
+.status-danger.device-card {
+  animation: blink-border 1.2s ease-in-out infinite;
+}
+
+/* 设备卡片信息行 */
+.device-info {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+}
+
+/* RUL进度条 */
+.rul-bar-container {
+  margin-top: 8px;
+}
+
+.rul-bar-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+}
+
+.rul-bar {
+  height: 6px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.rul-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.5s ease, background 0.3s ease;
+}
+
+/* RUL颜色分级 */
+.rul-high { background: linear-gradient(90deg, var(--accent-green), #34d399); }
+.rul-medium { background: linear-gradient(90deg, var(--accent-yellow), #fbbf24); }
+.rul-low { background: linear-gradient(90deg, var(--accent-red), #f87171); }
+
+/* ============================================
+   RUL趋势图面板（中间主区域）
+   ============================================ */
+.rul-panel {
+  grid-area: rul;
+  display: flex;
+  flex-direction: column;
+}
+
+.rul-panel .chart-container {
+  flex: 1;
+  min-height: 0;
+}
+
+/* ============================================
+   传感器仪表盘面板（右下）
+   ============================================ */
+.gauge-panel {
+  grid-area: gauges;
+  display: flex;
+  flex-direction: column;
+}
+
+.gauges {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);  /* 4列仪表盘 */
+  gap: 12px;
+  flex: 1;
+}
+
+.gauge-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.gauge-item .chart-container {
+  width: 100%;
+  height: 140px;
+}
+
+/* ============================================
+   报警事件列表面板
+   ============================================ */
+.alerts-panel {
+  grid-area: alerts;
+  display: flex;
+  flex-direction: column;
+}
+
+.alerts-table-wrapper {
+  flex: 1;
+  overflow-y: auto;
+  max-height: 200px;
+}
+
+#alerts-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+#alerts-table thead {
+  position: sticky;
+  top: 0;
+  background: var(--bg-panel);
+  z-index: 1;
+}
+
+#alerts-table th {
+  text-align: left;
+  padding: 8px 12px;
+  color: var(--text-secondary);
+  font-weight: 600;
+  border-bottom: 2px solid var(--border-color);
+  text-transform: uppercase;
+  font-size: 0.75rem;
+  letter-spacing: 0.5px;
+}
+
+#alerts-table td {
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(30, 58, 95, 0.5);
+  color: var(--text-primary);
+}
+
+#alerts-table tbody tr:hover {
+  background: rgba(59, 130, 246, 0.08);
+}
+
+/* 严重级别标签 */
+.severity-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.severity-high {
+  background: rgba(239, 68, 68, 0.2);
+  color: var(--accent-red);
+  border: 1px solid var(--accent-red);
+}
+
+.severity-medium {
+  background: rgba(245, 158, 11, 0.2);
+  color: var(--accent-yellow);
+  border: 1px solid var(--accent-yellow);
+}
+
+.severity-low {
+  background: rgba(6, 182, 212, 0.2);
+  color: var(--accent-cyan);
+  border: 1px solid var(--accent-cyan);
+}
+
+/* AI诊断按钮 */
+.btn-diagnosis {
+  background: linear-gradient(135deg, var(--accent-blue), #2563eb);
+  color: white;
+  border: none;
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-weight: 500;
+}
+
+.btn-diagnosis:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
+  background: linear-gradient(135deg, #2563eb, #1d4ed8);
+}
+
+/* ============================================
+   图表容器通用样式
+   ============================================ */
+.chart-container {
+  width: 100%;
+  height: 100%;
+  min-height: 200px;
+}
+
+/* ============================================
+   模态框样式
+   ============================================ */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.75);
+  display: none;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+  backdrop-filter: blur(4px);
+}
+
+.modal-overlay.active {
+  display: flex;
+}
+
+.modal {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  width: 90%;
+  max-width: 700px;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow:
+    0 20px 60px rgba(0, 0, 0, 0.5),
+    0 0 0 1px rgba(255, 255, 255, 0.05);
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border-color);
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.1) 0%, transparent 100%);
+  border-radius: 12px 12px 0 0;
+}
+
+.modal-header h3 {
+  font-size: 1.1rem;
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.modal-close {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 1.5rem;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: all 0.2s ease;
+  line-height: 1;
+}
+
+.modal-close:hover {
+  color: var(--accent-red);
+  background: rgba(239, 68, 68, 0.15);
+}
+
+.modal-body {
+  padding: 20px;
+  overflow-y: auto;
+  flex: 1;
+  color: var(--text-primary);
+  line-height: 1.7;
+  font-size: 0.9rem;
+}
+
+/* 模态框内容样式 */
+.modal-body h4 {
+  color: var(--accent-cyan);
+  font-size: 0.95rem;
+  margin: 16px 0 8px 0;
+  padding-bottom: 4px;
+  border-bottom: 1px dashed var(--border-color);
+}
+
+.modal-body h4:first-child {
+  margin-top: 0;
+}
+
+.modal-body ul {
+  padding-left: 20px;
+  margin: 8px 0;
+}
+
+.modal-body li {
+  margin: 6px 0;
+  color: var(--text-secondary);
+}
+
+.modal-body strong {
+  color: var(--text-primary);
+}
+
+.modal-body .highlight {
+  color: var(--accent-yellow);
+  font-weight: 600;
+}
+
+.modal-body .danger {
+  color: var(--accent-red);
+  font-weight: 600;
+}
+
+.modal-body .success {
+  color: var(--accent-green);
+  font-weight: 600;
+}
+
+/* ============================================
+   响应式布局优化
+   ============================================ */
+@media (max-width: 1200px) {
+  .dashboard {
+    grid-template-columns: 260px 1fr;
+  }
+
+  .gauges {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 768px) {
+  .dashboard {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto;
+    grid-template-areas:
+      "header"
+      "devices"
+      "rul"
+      "gauges"
+      "alerts";
+  }
+
+  .devices-panel {
+    max-height: 250px;
+  }
+
+  .device-cards {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  .device-card {
+    width: calc(50% - 5px);
+  }
+
+  .gauges {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+/* ============================================
+   滚动条美化
+   ============================================ */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-secondary);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--accent-blue);
+}
