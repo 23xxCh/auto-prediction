@@ -15,13 +15,14 @@ DIAGNOSIS_SYSTEM_PROMPT = """你是一名资深工业装备诊断专家，拥有
 - [备件2]
 ..."""
 
-def build_diagnosis_prompt(device_name, recent_data_str, anomaly_info):
+def build_diagnosis_prompt(device_name, recent_data_str, anomaly_info, shap_top_k=None):
     """构建完整的诊断Prompt
 
     Args:
         device_name: 设备名称
         recent_data_str: 最近传感器数据的字符串表示
         anomaly_info: 异常信息字典，包含fault_type和outlier_sensors
+        shap_top_k: SHAP Top-K 特征贡献列表，每项为 {"feature": str, "contribution": float}
 
     Returns:
         格式化的用户诊断提示词
@@ -34,7 +35,17 @@ def build_diagnosis_prompt(device_name, recent_data_str, anomaly_info):
 
 ## 最近60步传感器数据统计摘要
 {recent_data_str}
-
+"""
+    if shap_top_k:
+        shap_lines = "\n".join(
+            f"- {item['feature']}: {item['contribution']:+.4f}"
+            for item in shap_top_k
+        )
+        prompt += f"""
+## RUL 预测特征贡献（SHAP）
+{shap_lines}
+"""
+    prompt += f"""
 ## 异常信息
 故障类型：{fault_type}
 异常传感器：{', '.join(outlier_sensors) if outlier_sensors else '无'}

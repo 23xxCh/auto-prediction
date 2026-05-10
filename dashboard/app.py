@@ -13,20 +13,6 @@ from typing import Optional, List, Dict, Any, AsyncIterator
 import pandas as pd
 import numpy as np
 
-# 日志配置
-logger = logging.getLogger("dashboard")
-_handler = logging.StreamHandler()
-_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
-logger.addHandler(_handler)
-logger.setLevel(logging.INFO)
-
-# 全局状态
-df_global: Optional[pd.DataFrame] = None
-predictor: Any = None
-diagnosis_reports: Dict[str, Any] = {}
-_diagnosis_cache_order: list = []  # LRU 顺序追踪
-_DIAGNOSIS_CACHE_MAX = 10  # 缓存容量上限
-
 
 class DiagnoseRequest(BaseModel):
     """诊断请求模型（预留）"""
@@ -38,8 +24,10 @@ def init_app():
 
     加载传感器数据（优先从CSV读取，否则生成模拟数据），
     加载XGBoost RUL预测模型（如存在）。
+    加载 SHAP TreeExplainer（如存在）。
+    加载 LSTM-AE 异常检测器（如存在）。
     """
-    global df_global, predictor
+    global df_global, predictor, shap_explainer, anomaly_detector
 
     print("=" * 50)
     print("正在初始化 FastAPI 应用...")
@@ -104,6 +92,33 @@ def init_app():
         predictor = RULPredictor(model_path)
 
     print(f"  [OK] 设备数量: {df_global['device_id'].nunique()}")
+
+    # 3. 加载 SHAP TreeExplainer
+    try:
+        from models.shap import build_shap_explainer
+        shap_explainer = build_shap_explainer(model_path)
+        if shap_explainer.is_available:
+            print(f"  [OK] SHAP TreeExplainer 已加载")
+        else:
+            print(f"  [INFO] SHAP 不可用（模型未训练），使用降级模式")
+            shap_explainer = None
+    except Exception as e:
+        print(f"  [WARN] SHAP 初始化失败 ({e})，SHAP 不可用")
+        shap_explainer = None
+
+    # 4. 加载 LSTM-AE 异常检测器
+    try:
+        from models.anomaly_lstm import AnomalyLSTM
+        anomaly_detector = AnomalyLSTM()
+        if anomaly_detector.is_available:
+            print(f"  [OK] LSTM-AE 异常检测器已加载")
+        else:
+            print(f"  [INFO] LSTM-AE 模型未训练，跳过异常检测")
+            anomaly_detector = None
+    except Exception as e:
+        print(f"  [WARN] LSTM-AE 初始化失败 ({e})，异常检测不可用")
+        anomaly_detector = None
+
     print("初始化完成" + "=" * 50)
 
 
@@ -273,12 +288,30 @@ def get_device_rul(device_id: str, steps: int = 1440):
     # 真实RUL（从数据中获取）
     rul_true_list = df_recent["rul"].tolist()
 
+    # SHAP 贡献值（如 SHAP 可用）
+    shap_values_list = []
+    shap_feature_names = None
+    if shap_explainer is not None and shap_explainer.is_available and valid_start < n:
+        shap_feature_names = shap_explainer.FEATURE_NAMES
+        for i in range(valid_start, n):
+            df_window = df_recent.iloc[i - 60:i].copy()
+            features = predictor._extract_window_features(df_window)
+            sv = shap_explainer.explain(features)[0]
+            shap_values_list.append([round(float(v), 6) for v in sv])
+        # 补齐前面的 nan
+        shap_values_list = [[np.nan] * 20] * valid_start + shap_values_list
+        shap_values_list = shap_values_list[:steps]
+    else:
+        shap_values_list = [[np.nan] * 20] * steps
+
     return {
         "device_id": device_id,
         "steps": len(df_recent),
         "timestamps": df_recent["timestamp"].dt.strftime("%Y-%m-%d %H:%M:%S").tolist(),
         "rul_predicted": rul_predicted_list,
-        "rul_true": [round(r, 4) for r in rul_true_list]
+        "rul_true": [round(r, 4) for r in rul_true_list],
+        "shap_values": shap_values_list,
+        "shap_feature_names": shap_feature_names or []
     }
 
 
@@ -331,6 +364,36 @@ def get_alerts():
     return alerts
 
 
+@app.get("/api/device/{device_id}/anomaly")
+def get_device_anomaly(device_id: str):
+    """获取设备 LSTM-AE 异常检测结果
+
+    Args:
+        device_id: 设备ID
+
+    Returns:
+        Dict: 包含 anomaly_score, is_anomaly, threshold
+    """
+    if df_global is None:
+        raise HTTPException(status_code=500, detail="数据未初始化")
+
+    df_device = df_global[df_global["device_id"] == device_id].sort_values("timestamp")
+    if len(df_device) == 0:
+        raise HTTPException(status_code=404, detail=f"设备 {device_id} 不存在")
+
+    if anomaly_detector is None or not anomaly_detector.is_available:
+        raise HTTPException(status_code=503, detail="LSTM-AE 异常检测模型未训练")
+
+    df_recent = df_device.tail(60).copy()
+    result = anomaly_detector.detect(df_recent)
+    return {
+        "device_id": device_id,
+        "anomaly_score": result["anomaly_score"],
+        "is_anomaly": result["is_anomaly"],
+        "threshold": result["threshold"]
+    }
+
+
 @app.post("/api/device/{device_id}/diagnose")
 async def diagnose_device(device_id: str):
     logger.info(f"diagnose request: device_id={device_id}")
@@ -359,9 +422,18 @@ async def diagnose_device(device_id: str):
     # 获取设备名称
     device_name = df_device["device_name"].iloc[-1] if "device_name" in df_device.columns else device_id
 
+    # 提取 SHAP Top-3 特征贡献（如 SHAP 可用）
+    shap_top_k = None
+    if shap_explainer is not None and shap_explainer.is_available:
+        try:
+            features = predictor._extract_window_features(df_recent)
+            shap_top_k = shap_explainer.top_contributions(features, top_k=3)
+        except Exception:
+            pass
+
     # 执行诊断（LLM API 调用较慢，在线程池中隔离执行）
     from agent.diagnostic_agent import diagnose
-    report = await asyncio.to_thread(diagnose, device_name, df_recent, anomaly_info, device_id)
+    report = await asyncio.to_thread(diagnose, device_name, df_recent, anomaly_info, device_id, shap_top_k)
     logger.info(f"diagnosis done: device_id={device_id}, severity={report.get('severity')}")
 
     # LRU 缓存（容量上限 _DIAGNOSIS_CACHE_MAX）
