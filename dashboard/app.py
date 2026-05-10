@@ -13,20 +13,6 @@ from typing import Optional, List, Dict, Any, AsyncIterator
 import pandas as pd
 import numpy as np
 
-# 日志配置
-logger = logging.getLogger("dashboard")
-_handler = logging.StreamHandler()
-_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
-logger.addHandler(_handler)
-logger.setLevel(logging.INFO)
-
-# 全局状态
-df_global: Optional[pd.DataFrame] = None
-predictor: Any = None
-diagnosis_reports: Dict[str, Any] = {}
-_diagnosis_cache_order: list = []  # LRU 顺序追踪
-_DIAGNOSIS_CACHE_MAX = 10  # 缓存容量上限
-
 
 class DiagnoseRequest(BaseModel):
     """诊断请求模型（预留）"""
@@ -38,8 +24,10 @@ def init_app():
 
     加载传感器数据（优先从CSV读取，否则生成模拟数据），
     加载XGBoost RUL预测模型（如存在）。
+    加载 SHAP TreeExplainer（如存在）。
+    加载 LSTM-AE 异常检测器（如存在）。
     """
-    global df_global, predictor
+    global df_global, predictor, shap_explainer, anomaly_detector, kb_retriever
 
     print("=" * 50)
     print("正在初始化 FastAPI 应用...")
@@ -104,6 +92,48 @@ def init_app():
         predictor = RULPredictor(model_path)
 
     print(f"  [OK] 设备数量: {df_global['device_id'].nunique()}")
+
+    # 3. 加载 SHAP TreeExplainer
+    try:
+        from models.shap import build_shap_explainer
+        shap_explainer = build_shap_explainer(model_path)
+        if shap_explainer.is_available:
+            print(f"  [OK] SHAP TreeExplainer 已加载")
+        else:
+            print(f"  [INFO] SHAP 不可用（模型未训练），使用降级模式")
+            shap_explainer = None
+    except Exception as e:
+        print(f"  [WARN] SHAP 初始化失败 ({e})，SHAP 不可用")
+        shap_explainer = None
+
+    # 4. 加载 LSTM-AE 异常检测器
+    try:
+        from models.anomaly_lstm import AnomalyLSTM
+        anomaly_detector = AnomalyLSTM()
+        if anomaly_detector.is_available:
+            print(f"  [OK] LSTM-AE 异常检测器已加载")
+        else:
+            print(f"  [INFO] LSTM-AE 模型未训练，跳过异常检测")
+            anomaly_detector = None
+    except Exception as e:
+        print(f"  [WARN] LSTM-AE 初始化失败 ({e})，异常检测不可用")
+        anomaly_detector = None
+
+    # 5. 加载维护知识库（RAG）
+    try:
+        from rag.retriever import MaintenanceKB
+        kb_path = os.path.join(os.path.dirname(__file__), "..", "rag", "maintenance_kb")
+        if os.path.isdir(kb_path):
+            kb_retriever = MaintenanceKB(kb_path)
+            kb_retriever.load()
+            print(f"  [OK] 维护知识库已加载：{len(kb_retriever._docs)} 个文档块")
+        else:
+            print(f"  [INFO] 维护知识库目录不存在，跳过 RAG")
+            kb_retriever = None
+    except Exception as e:
+        print(f"  [WARN] 知识库加载失败 ({e})，RAG 不可用")
+        kb_retriever = None
+
     print("初始化完成" + "=" * 50)
 
 
@@ -273,12 +303,30 @@ def get_device_rul(device_id: str, steps: int = 1440):
     # 真实RUL（从数据中获取）
     rul_true_list = df_recent["rul"].tolist()
 
+    # SHAP 贡献值（如 SHAP 可用）
+    shap_values_list = []
+    shap_feature_names = None
+    if shap_explainer is not None and shap_explainer.is_available and valid_start < n:
+        shap_feature_names = shap_explainer.FEATURE_NAMES
+        for i in range(valid_start, n):
+            df_window = df_recent.iloc[i - 60:i].copy()
+            features = predictor._extract_window_features(df_window)
+            sv = shap_explainer.explain(features)[0]
+            shap_values_list.append([round(float(v), 6) for v in sv])
+        # 补齐前面的 nan
+        shap_values_list = [[np.nan] * 20] * valid_start + shap_values_list
+        shap_values_list = shap_values_list[:steps]
+    else:
+        shap_values_list = [[np.nan] * 20] * steps
+
     return {
         "device_id": device_id,
         "steps": len(df_recent),
         "timestamps": df_recent["timestamp"].dt.strftime("%Y-%m-%d %H:%M:%S").tolist(),
         "rul_predicted": rul_predicted_list,
-        "rul_true": [round(r, 4) for r in rul_true_list]
+        "rul_true": [round(r, 4) for r in rul_true_list],
+        "shap_values": shap_values_list,
+        "shap_feature_names": shap_feature_names or []
     }
 
 
@@ -331,6 +379,66 @@ def get_alerts():
     return alerts
 
 
+@app.get("/api/device/{device_id}/anomaly")
+
+@app.get("/api/knowledge/search")
+def knowledge_search(q: str = "", top_k: int = 3):
+    """维护知识库语义检索
+
+    Args:
+        q: 查询文本（如故障描述或设备症状）
+        top_k: 返回最相似的 K 个文档片段，默认 3
+
+    Returns:
+        list[dict]: 文档片段列表，包含 text, source, fault_type, score
+    """
+    if not kb_retriever:
+        raise HTTPException(status_code=503, detail="知识库未加载")
+
+    if not q:
+        return []
+
+    results = kb_retriever.search(q, top_k=top_k)
+    return [
+        {
+            "text": r["text"][:500],  # 限制长度避免响应过大
+            "source": r["metadata"]["source"],
+            "fault_type": r["metadata"]["fault_type"],
+            "score": round(r["score"], 4)
+        }
+        for r in results
+    ]
+
+
+def get_device_anomaly(device_id: str):
+    """获取设备 LSTM-AE 异常检测结果
+
+    Args:
+        device_id: 设备ID
+
+    Returns:
+        Dict: 包含 anomaly_score, is_anomaly, threshold
+    """
+    if df_global is None:
+        raise HTTPException(status_code=500, detail="数据未初始化")
+
+    df_device = df_global[df_global["device_id"] == device_id].sort_values("timestamp")
+    if len(df_device) == 0:
+        raise HTTPException(status_code=404, detail=f"设备 {device_id} 不存在")
+
+    if anomaly_detector is None or not anomaly_detector.is_available:
+        raise HTTPException(status_code=503, detail="LSTM-AE 异常检测模型未训练")
+
+    df_recent = df_device.tail(60).copy()
+    result = anomaly_detector.detect(df_recent)
+    return {
+        "device_id": device_id,
+        "anomaly_score": result["anomaly_score"],
+        "is_anomaly": result["is_anomaly"],
+        "threshold": result["threshold"]
+    }
+
+
 @app.post("/api/device/{device_id}/diagnose")
 async def diagnose_device(device_id: str):
     logger.info(f"diagnose request: device_id={device_id}")
@@ -359,9 +467,39 @@ async def diagnose_device(device_id: str):
     # 获取设备名称
     device_name = df_device["device_name"].iloc[-1] if "device_name" in df_device.columns else device_id
 
+    # 提取 SHAP Top-3 特征贡献（如 SHAP 可用）
+    shap_top_k = None
+    if shap_explainer is not None and shap_explainer.is_available:
+        try:
+            features = predictor._extract_window_features(df_recent)
+            shap_top_k = shap_explainer.top_contributions(features, top_k=3)
+        except Exception:
+            pass
+
+
+    # RAG 知识检索（如知识库可用）
+    rag_context = None
+    if kb_retriever is not None:
+        try:
+            q_parts = [anomaly_info.get("fault_type", "normal")]
+            outlier = anomaly_info.get("outlier_sensors", [])
+            if outlier:
+                q_parts.append("异常传感器: " + ", ".join(outlier))
+            rag_query = " ".join(q_parts)
+            if rag_query.strip():
+                results = kb_retriever.search(rag_query, top_k=2)
+                if results:
+                    parts = []
+                    for r in results:
+                        src = r["metadata"]["source"]
+                        body = r["text"][:300]
+                        parts.append("[来源: " + src + "] " + body)
+                    rag_context = " | ".join(parts)
+        except Exception:
+            pass
     # 执行诊断（LLM API 调用较慢，在线程池中隔离执行）
     from agent.diagnostic_agent import diagnose
-    report = await asyncio.to_thread(diagnose, device_name, df_recent, anomaly_info, device_id)
+    report = await asyncio.to_thread(diagnose, device_name, df_recent, anomaly_info, device_id, shap_top_k, rag_context)
     logger.info(f"diagnosis done: device_id={device_id}, severity={report.get('severity')}")
 
     # LRU 缓存（容量上限 _DIAGNOSIS_CACHE_MAX）

@@ -175,7 +175,7 @@ def parse_diagnosis_output(text):
     return result
 
 
-def diagnose(device_name, df_recent, anomaly_info, device_id):
+def diagnose(device_name, df_recent, anomaly_info, device_id, shap_top_k=None, rag_context=None):
     """执行设备故障诊断
 
     Args:
@@ -183,6 +183,7 @@ def diagnose(device_name, df_recent, anomaly_info, device_id):
         df_recent: 最近60步的传感器数据
         anomaly_info: 异常信息字典，包含fault_type和outlier_sensors
         device_id: 设备ID
+        shap_top_k: SHAP Top-K 特征贡献列表，每项为 {"feature": str, "contribution": float}
 
     Returns:
         dict: 诊断报告字典
@@ -205,8 +206,8 @@ def diagnose(device_name, df_recent, anomaly_info, device_id):
         # 构建数据上下文
         recent_data_str = build_data_context(df_recent)
 
-        # 构建诊断Prompt
-        user_message = build_diagnosis_prompt(device_name, recent_data_str, anomaly_info)
+        # 构建诊断Prompt（包含 SHAP 特征贡献）
+        user_message = build_diagnosis_prompt(device_name, recent_data_str, anomaly_info, shap_top_k, rag_context)
 
         # 调用LLM API
         response_text = call_llm_api(DIAGNOSIS_SYSTEM_PROMPT, user_message)
