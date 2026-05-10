@@ -60,3 +60,17 @@ pytest tests/ -v
 - Frontend is pure HTML/CSS/JS (no React/Vue) — easier to embed in interview demos
 - Data is generated programmatically (not from files) — reproducible via seed
 - All code has Chinese comments for interview presentation
+
+## Agent skills
+
+### Issue tracker
+
+Issues live in GitHub Issues. Uses the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Uses default label vocabulary: needs-triage, needs-info, ready-for-agent, ready-for-human, wontfix. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context layout: one `CONTEXT.md` + `docs/adr/` at repo root. See `docs/agents/domain.md`.
