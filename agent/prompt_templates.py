@@ -15,7 +15,7 @@ DIAGNOSIS_SYSTEM_PROMPT = """你是一名资深工业装备诊断专家，拥有
 - [备件2]
 ..."""
 
-def build_diagnosis_prompt(device_name, recent_data_str, anomaly_info, shap_top_k=None):
+def build_diagnosis_prompt(device_name, recent_data_str, anomaly_info, shap_top_k=None, rag_context=None):
     """构建完整的诊断Prompt
 
     Args:
@@ -51,6 +51,11 @@ def build_diagnosis_prompt(device_name, recent_data_str, anomaly_info, shap_top_
 异常传感器：{', '.join(outlier_sensors) if outlier_sensors else '无'}
 
 请根据以上信息进行故障诊断分析。
+"""
+    if rag_context:
+        prompt += f"""
+## 维护知识库参考
+{rag_context}
 """
     return prompt
 

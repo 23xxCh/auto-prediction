@@ -27,7 +27,7 @@ def init_app():
     加载 SHAP TreeExplainer（如存在）。
     加载 LSTM-AE 异常检测器（如存在）。
     """
-    global df_global, predictor, shap_explainer, anomaly_detector
+    global df_global, predictor, shap_explainer, anomaly_detector, kb_retriever
 
     print("=" * 50)
     print("正在初始化 FastAPI 应用...")
@@ -118,6 +118,21 @@ def init_app():
     except Exception as e:
         print(f"  [WARN] LSTM-AE 初始化失败 ({e})，异常检测不可用")
         anomaly_detector = None
+
+    # 5. 加载维护知识库（RAG）
+    try:
+        from rag.retriever import MaintenanceKB
+        kb_path = os.path.join(os.path.dirname(__file__), "..", "rag", "maintenance_kb")
+        if os.path.isdir(kb_path):
+            kb_retriever = MaintenanceKB(kb_path)
+            kb_retriever.load()
+            print(f"  [OK] 维护知识库已加载：{len(kb_retriever._docs)} 个文档块")
+        else:
+            print(f"  [INFO] 维护知识库目录不存在，跳过 RAG")
+            kb_retriever = None
+    except Exception as e:
+        print(f"  [WARN] 知识库加载失败 ({e})，RAG 不可用")
+        kb_retriever = None
 
     print("初始化完成" + "=" * 50)
 
@@ -365,6 +380,36 @@ def get_alerts():
 
 
 @app.get("/api/device/{device_id}/anomaly")
+
+@app.get("/api/knowledge/search")
+def knowledge_search(q: str = "", top_k: int = 3):
+    """维护知识库语义检索
+
+    Args:
+        q: 查询文本（如故障描述或设备症状）
+        top_k: 返回最相似的 K 个文档片段，默认 3
+
+    Returns:
+        list[dict]: 文档片段列表，包含 text, source, fault_type, score
+    """
+    if not kb_retriever:
+        raise HTTPException(status_code=503, detail="知识库未加载")
+
+    if not q:
+        return []
+
+    results = kb_retriever.search(q, top_k=top_k)
+    return [
+        {
+            "text": r["text"][:500],  # 限制长度避免响应过大
+            "source": r["metadata"]["source"],
+            "fault_type": r["metadata"]["fault_type"],
+            "score": round(r["score"], 4)
+        }
+        for r in results
+    ]
+
+
 def get_device_anomaly(device_id: str):
     """获取设备 LSTM-AE 异常检测结果
 
@@ -431,9 +476,30 @@ async def diagnose_device(device_id: str):
         except Exception:
             pass
 
+
+    # RAG 知识检索（如知识库可用）
+    rag_context = None
+    if kb_retriever is not None:
+        try:
+            q_parts = [anomaly_info.get("fault_type", "normal")]
+            outlier = anomaly_info.get("outlier_sensors", [])
+            if outlier:
+                q_parts.append("异常传感器: " + ", ".join(outlier))
+            rag_query = " ".join(q_parts)
+            if rag_query.strip():
+                results = kb_retriever.search(rag_query, top_k=2)
+                if results:
+                    parts = []
+                    for r in results:
+                        src = r["metadata"]["source"]
+                        body = r["text"][:300]
+                        parts.append("[来源: " + src + "] " + body)
+                    rag_context = " | ".join(parts)
+        except Exception:
+            pass
     # 执行诊断（LLM API 调用较慢，在线程池中隔离执行）
     from agent.diagnostic_agent import diagnose
-    report = await asyncio.to_thread(diagnose, device_name, df_recent, anomaly_info, device_id, shap_top_k)
+    report = await asyncio.to_thread(diagnose, device_name, df_recent, anomaly_info, device_id, shap_top_k, rag_context)
     logger.info(f"diagnosis done: device_id={device_id}, severity={report.get('severity')}")
 
     # LRU 缓存（容量上限 _DIAGNOSIS_CACHE_MAX）

@@ -175,7 +175,7 @@ def parse_diagnosis_output(text):
     return result
 
 
-def diagnose(device_name, df_recent, anomaly_info, device_id, shap_top_k=None):
+def diagnose(device_name, df_recent, anomaly_info, device_id, shap_top_k=None, rag_context=None):
     """执行设备故障诊断
 
     Args:
@@ -207,7 +207,7 @@ def diagnose(device_name, df_recent, anomaly_info, device_id, shap_top_k=None):
         recent_data_str = build_data_context(df_recent)
 
         # 构建诊断Prompt（包含 SHAP 特征贡献）
-        user_message = build_diagnosis_prompt(device_name, recent_data_str, anomaly_info, shap_top_k)
+        user_message = build_diagnosis_prompt(device_name, recent_data_str, anomaly_info, shap_top_k, rag_context)
 
         # 调用LLM API
         response_text = call_llm_api(DIAGNOSIS_SYSTEM_PROMPT, user_message)
