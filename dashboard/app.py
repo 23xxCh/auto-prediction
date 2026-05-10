@@ -258,28 +258,14 @@ def get_device_rul(device_id: str, steps: int = 1440):
     valid_start = max(60, n) - 60  # 第一个有效窗口的起始索引
 
     if valid_start < n and predictor.model is not None:
-        # 提取所有有效窗口的特征矩阵
-        all_features = []
-        valid_indices = []
+        # 通过 predictor.predict() 调用，由 wrapper 内部做特征提取，
+        # 保证与训练时的 extract_features() 行为一致（不再直接调用 predictor.model.predict()）。
+        rul_predicted_list = [np.nan] * valid_start
         for i in range(valid_start, n):
-            window_vals = df_recent[sensor_cols].values[i - 60:i]
-            feat = []
-            for j in range(len(sensor_cols)):
-                feat.extend(extract_window_features(window_vals[:, j]))
-            all_features.append(feat)
-            valid_indices.append(i)
-
-        if all_features:
-            X = np.array(all_features, dtype=np.float32)
-            preds = predictor.model.predict(X)
-            # 构建完整结果数组（前面填充NaN）
-            rul_predicted_list = [np.nan] * valid_start
-            for idx, p in zip(valid_indices, preds):
-                rul_predicted_list.append(round(float(np.clip(p, 0.0, 1.0)), 4))
-            # 如果steps限制了返回范围，裁剪到实际返回的长度
-            rul_predicted_list = rul_predicted_list[:steps]
-        else:
-            rul_predicted_list = [1.0] * steps
+            df_window = df_recent.iloc[i - 60:i].copy()
+            p = predictor.predict(df_window)
+            rul_predicted_list.append(round(p, 4))
+        rul_predicted_list = rul_predicted_list[:steps]
     else:
         # 模型不可用，返回默认正常值
         rul_predicted_list = [1.0] * steps
