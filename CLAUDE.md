@@ -41,13 +41,17 @@ pytest tests/ -v
 
 1. **`data/`** — Sensor data simulation and fault injection. Generates 7-day time-series for 3 devices with 4 sensor types (temp/vibration/current/speed). Fault modes: bearing wear, overheating, rotor imbalance, belt loosening.
 
-2. **`models/`** — XGBoost regression for RUL prediction. Feature engineering uses rolling window statistics (60-step). 5-fold time-series cross-validation. Outputs R²/RMSE/MAE metrics and feature importance rankings.
+2. **`models/`** — XGBoost regression for RUL prediction.
+   - `train.py`: Feature engineering (60-step rolling window: mean/std/min/max/trend), 5-fold TimeSeriesSplit CV, outputs R²/RMSE/MAE metrics
+   - `predict.py`: `RULPredictor` class for inference, `detect_anomaly()` for 3σ threshold detection
 
 3. **`agent/`** — LLM-powered diagnostic agent. Triggered when RUL < 20% or sensor exceeds 3σ threshold. Collects recent 60-step data, sends to OpenAI-compatible API, returns structured fault report (root cause, action steps, spare parts list). Falls back to template-based reports if API unavailable.
 
-4. **`dashboard/`** — FastAPI backend + HTML/ECharts frontend. Industrial HMI dark theme. REST API serves device status, telemetry, RUL trends, alerts, and AI diagnosis reports. Frontend polls every 3 seconds.
+4. **`dashboard/`** — FastAPI backend + HTML/ECharts frontend. Industrial HMI dark theme. REST API serves device status, telemetry, RUL trends, alerts, and AI diagnosis reports. Frontend polls every 3 seconds via `/api/device/{id}/status`.
 
 5. **`docs/`** — Design specs, README, interview script (STAR method with 祥发纺织/华为场景标注).
+
+**Outputs/**: `outputs/sensor_data.csv`, `outputs/xgboost_rul_model.json`, `outputs/feature_importance.png`, `outputs/prediction_scatter.png`, `outputs/timeseries_{device}.png`, `outputs/sensor_heatmap.png`
 
 ## Key Design Decisions
 

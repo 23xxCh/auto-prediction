@@ -1,8 +1,14 @@
 """预测模型 - RUL预测和异常检测（使用真实XGBoost模型）"""
 
 import os
+import sys
+
+# 确保项目根目录在Python路径中
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import pandas as pd
 import numpy as np
+from models.features import extract_window_features
 
 
 class RULPredictor:
@@ -67,13 +73,7 @@ class RULPredictor:
 
         for col in sensor_cols:
             vals = window[col].values
-            feature_values.extend([
-                float(np.mean(vals)),
-                float(np.std(vals)),
-                float(np.min(vals)),
-                float(np.max(vals)),
-                float(np.polyfit(np.arange(len(vals)), vals, 1)[0]),
-            ])
+            feature_values.extend(extract_window_features(vals))
 
         return np.array(feature_values, dtype=np.float32)
 

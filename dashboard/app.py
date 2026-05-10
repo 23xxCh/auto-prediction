@@ -74,11 +74,23 @@ def init_app():
             class ModelWrapper:
                 def __init__(self, model):
                     self.model = model
-                def predict(self, df_recent):
-                    """调用模型预测RUL"""
-                    features = df_recent[["temperature", "vibration", "current", "rpm"]].copy()
-                    features["rul"] = df_recent["rul"].iloc[-1] if "rul" in df_recent.columns else 0.8
-                    return self.model.predict(features)[0]
+
+                def predict(self, df_recent: pd.DataFrame) -> float:
+                    """调用模型预测RUL（单行）。
+                    特征必须与 models/train.py 的 extract_features() 输出格式一致。
+                    """
+                    if len(df_recent) < 60:
+                        return 1.0
+                    from models.features import extract_window_features
+
+                    sensor_cols = ["temperature", "vibration", "current", "rpm"]
+                    feature_values = []
+                    for col in sensor_cols:
+                        vals = df_recent[col].values[-60:]
+                        feature_values.extend(extract_window_features(vals))
+                    features = np.array(feature_values, dtype=np.float32).reshape(1, -1)
+                    pred = self.model.predict(features)
+                    return float(np.clip(pred[0], 0.0, 1.0))
 
             predictor = ModelWrapper(model)
             print(f"  [OK] 已加载XGBoost模型: {model_path}")
@@ -238,12 +250,39 @@ def get_device_rul(device_id: str, steps: int = 1440):
     # 取最近steps条数据
     df_recent = df_device.tail(steps).copy()
 
-    # 计算预测RUL（调用模型）
-    rul_predicted_list = []
-    for i in range(len(df_recent)):
-        window = df_recent.iloc[max(0, i-60):i+1]
-        rul_pred = predictor.predict(window)
-        rul_predicted_list.append(round(rul_pred, 4))
+    # 批量预测：一次性提取所有60步窗口特征，调用一次模型
+    from models.features import extract_window_features
+
+    sensor_cols = ["temperature", "vibration", "current", "rpm"]
+    n = len(df_recent)
+    valid_start = max(60, n) - 60  # 第一个有效窗口的起始索引
+
+    if valid_start < n and predictor.model is not None:
+        # 提取所有有效窗口的特征矩阵
+        all_features = []
+        valid_indices = []
+        for i in range(valid_start, n):
+            window_vals = df_recent[sensor_cols].values[i - 60:i]
+            feat = []
+            for j in range(len(sensor_cols)):
+                feat.extend(extract_window_features(window_vals[:, j]))
+            all_features.append(feat)
+            valid_indices.append(i)
+
+        if all_features:
+            X = np.array(all_features, dtype=np.float32)
+            preds = predictor.model.predict(X)
+            # 构建完整结果数组（前面填充NaN）
+            rul_predicted_list = [np.nan] * valid_start
+            for idx, p in zip(valid_indices, preds):
+                rul_predicted_list.append(round(float(np.clip(p, 0.0, 1.0)), 4))
+            # 如果steps限制了返回范围，裁剪到实际返回的长度
+            rul_predicted_list = rul_predicted_list[:steps]
+        else:
+            rul_predicted_list = [1.0] * steps
+    else:
+        # 模型不可用，返回默认正常值
+        rul_predicted_list = [1.0] * steps
 
     # 真实RUL（从数据中获取）
     rul_true_list = df_recent["rul"].tolist()

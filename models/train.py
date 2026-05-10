@@ -15,6 +15,7 @@ import matplotlib.pyplot as plt
 from xgboost import XGBRegressor
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
+from models.features import compute_trend
 
 # ============ 常量定义 ============
 WINDOW_SIZE = 60  # 滚动窗口大小
@@ -65,6 +66,7 @@ def extract_features(df: pd.DataFrame):
 
         # 跳过数据量不足WINDOW_SIZE的设备
         if n < WINDOW_SIZE:
+            print(f"  [WARN] 设备 {device_id} 数据量不足({n} < {WINDOW_SIZE})，已跳过")
             continue
 
         # 初始化特征矩阵
@@ -77,23 +79,7 @@ def extract_features(df: pd.DataFrame):
 
             for i in range(n - WINDOW_SIZE + 1):
                 window = values[i:i + WINDOW_SIZE]
-
-                # 计算统计特征
-                window_mean = np.mean(window)
-                window_std = np.std(window)
-                window_min = np.min(window)
-                window_max = np.max(window)
-
-                # 计算趋势（线性斜率）
-                x = np.arange(WINDOW_SIZE)
-                # np.polyfit返回多项式系数，次数为1时返回[slope, intercept]
-                slope = np.polyfit(x, window, 1)[0]
-
-                X_device[i, col_idx] = window_mean
-                X_device[i, col_idx + 1] = window_std
-                X_device[i, col_idx + 2] = window_min
-                X_device[i, col_idx + 3] = window_max
-                X_device[i, col_idx + 4] = slope
+                X_device[i, col_idx:col_idx + 5] = compute_trend(window)
 
             col_idx += 5
 
